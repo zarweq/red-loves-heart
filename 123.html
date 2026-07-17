@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>ангелок</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; }
+  html, body {
+    width:100%;
+    background:#000;
+    overflow:hidden;
+    position:fixed;
+    inset:0;
+    overscroll-behavior:none;
+    touch-action:none;
+  }
+  #app {
+    width:100%;
+    height:calc(var(--vh,1vh) * 100);
+    position:relative;
+  }
+  .screen {
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none;
+    transition:opacity .6s ease;
+  }
+  .screen.active { opacity:1; pointer-events:auto; }
+
+  #startBtn {
+    background:#000;
+    color:#fff;
+    border:1px solid #fff;
+    font-size:17px;
+    letter-spacing:2px;
+    padding:16px 42px;
+    border-radius:30px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    text-transform:lowercase;
+  }
+  #startBtn:active { background:#181818; }
+
+  #letterCanvas { position:absolute; inset:0; width:100%; height:100%; }
+
+  #heartWrap {
+    position:relative;
+    width:100%; height:100%;
+  }
+  .heart-word {
+    position:absolute;
+    color:#ff1a3c;
+    font-size:11px;
+    font-family: Georgia, 'Times New Roman', serif;
+    white-space:nowrap;
+    text-shadow:0 0 4px #ff1a3c, 0 0 10px #ff1a3c, 0 0 18px #ff2d4d;
+    opacity:0;
+    animation:fadeInWord .8s forwards;
+  }
+  @keyframes fadeInWord { to { opacity:1; } }
+  #centerText {
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    color:#ff1a3c;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-style:italic;
+    font-size:26px;
+    text-shadow:0 0 6px #ff1a3c, 0 0 16px #ff2d4d;
+    opacity:0;
+    animation:fadeInWord 1.2s .6s forwards;
+    z-index:5;
+    white-space:nowrap;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="screen active" id="startScreen">
+    <button id="startBtn">нажми</button>
+  </div>
+  <div class="screen" id="letterScreen">
+    <canvas id="letterCanvas"></canvas>
+  </div>
+  <div class="screen" id="heartScreen">
+    <div id="heartWrap"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  function setVH(){
+    document.documentElement.style.setProperty('--vh', (window.innerHeight*0.01)+'px');
+  }
+  setVH();
+  window.addEventListener('resize', setVH);
+  window.addEventListener('orientationchange', setVH);
+
+  const startScreen  = document.getElementById('startScreen');
+  const letterScreen = document.getElementById('letterScreen');
+  const heartScreen  = document.getElementById('heartScreen');
+  const startBtn     = document.getElementById('startBtn');
+  const canvas       = document.getElementById('letterCanvas');
+  const ctx          = canvas.getContext('2d');
+
+  function resizeCanvas(){
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = window.innerWidth  * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width  = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  function vibrate(ms){
+    if (navigator.vibrate) { try { navigator.vibrate(ms); } catch(e){} }
+  }
+  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+  function easeOutCubic(t){ return 1 - Math.pow(1-t,3); }
+
+  function animate(duration, draw){
+    return new Promise(resolve=>{
+      const start = performance.now();
+      function frame(now){
+        const t = Math.min(1, (now-start)/duration);
+        draw(t);
+        if (t < 1) requestAnimationFrame(frame);
+        else resolve();
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  function getLetterPoints(letter, cw, ch){
+    const off = document.createElement('canvas');
+    off.width = cw; off.height = ch;
+    const octx = off.getContext('2d');
+    const size = Math.min(cw, ch) * 0.55;
+    octx.fillStyle = '#fff';
+    octx.font = 'bold ' + size + 'px -apple-system, Helvetica, Arial, sans-serif';
+    octx.textAlign = 'center';
+    octx.textBaseline = 'middle';
+    octx.fillText(letter, cw/2, ch/2);
+    const data = octx.getImageData(0,0,cw,ch).data;
+    const points = [];
+    const step = 4;
+    for (let y=0; y<ch; y+=step){
+      for (let x=0; x<cw; x+=step){
+        const idx = (y*cw+x)*4;
+        if (data[idx+3] > 120) points.push({x, y});
+      }
+    }
+    return points;
+  }
+
+  function shuffle(arr){
+    for (let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]] = [arr[j],arr[i]];
+    }
+    return arr;
+  }
+
+  async function showLetter(letter, cw, ch){
+    let points = shuffle(getLetterPoints(letter, cw, ch));
+    const maxParticles = 260;
+    if (points.length > maxParticles){
+      const stride = Math.ceil(points.length/maxParticles);
+      points = points.filter((_,i)=> i % stride === 0);
+    }
+    const particles = points.map(p=>({
+      tx:p.x, ty:p.y,
+      x: cw/2 + (Math.random()-0.5)*cw*1.4,
+      y: ch/2 + (Math.random()-0.5)*ch*1.4,
+      size: 1.4 + Math.random()*2
+    }));
+
+    const assembleDur = 400;
+    const holdDur      = 250;
+    const disperseDur  = 50;
+
+    await animate(assembleDur, t=>{
+      const e = easeOutCubic(t);
+      ctx.clearRect(0,0,cw,ch);
+      ctx.fillStyle = '#fff';
+      ctx.shadowColor = 'rgba(255,255,255,0.85)';
+      ctx.shadowBlur = 6;
+      particles.forEach(p=>{
+        const x = p.x + (p.tx-p.x)*e;
+        const y = p.y + (p.ty-p.y)*e;
+        ctx.beginPath();
+        ctx.arc(x,y,p.size,0,Math.PI*2);
+        ctx.fill();
+      });
+    });
+
+    ctx.clearRect(0,0,cw,ch);
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = 'rgba(255,255,255,0.85)';
+    ctx.shadowBlur = 6;
+    particles.forEach(p=>{
+      ctx.beginPath();
+      ctx.arc(p.tx,p.ty,p.size,0,Math.PI*2);
+      ctx.fill();
+    });
+    await sleep(holdDur);
+
+    await animate(disperseDur, t=>{
+      ctx.clearRect(0,0,cw,ch);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,' + (1-t) + ')';
+      particles.forEach(p=>{
+        const x = p.tx + (Math.random()-0.5)*t*40;
+        const y = p.ty + (Math.random()-0.5)*t*40;
+        ctx.beginPath();
+        ctx.arc(x,y,p.size,0,Math.PI*2);
+        ctx.fill();
+      });
+    });
+    ctx.clearRect(0,0,cw,ch);
+  }
+
+  function buildHeart(){
+    const wrap = document.getElementById('heartWrap');
+    wrap.innerHTML = '';
+    const w = window.innerWidth, h = window.innerHeight;
+    const cx = w/2, cy = h*0.46;
+    const scale = Math.min(w,h)/34;
+    const rows = 26;
+    for (let r=0; r<rows; r++){
+      const count = 40;
+      const rr = 1 - (r/rows)*0.94;
+      for (let i=0;i<count;i++){
+        if (Math.random() > 0.55) continue;
+        const t = (i/count) * Math.PI*2;
+        const x = 16*Math.pow(Math.sin(t),3) * scale * rr;
+        const y = -(13*Math.cos(t) - 5*Math.cos(2*t) - 2*Math.cos(3*t) - Math.cos(4*t)) * scale * rr;
+
+        const dx = 48*Math.pow(Math.sin(t),2)*Math.cos(t);
+        const dy = -(-13*Math.sin(t) + 10*Math.sin(2*t) + 6*Math.sin(3*t) + 4*Math.sin(4*t));
+        const angle = Math.atan2(dy, dx) * 180/Math.PI;
+
+        const el = document.createElement('div');
+        el.className = 'heart-word';
+        el.textContent = 'i love you';
+        el.style.left = (cx + x) + 'px';
+        el.style.top  = (cy + y) + 'px';
+        el.style.transform = 'translate(-50%,-50%) rotate(' + angle + 'deg)';
+        el.style.animationDelay = (Math.random()*1.2) + 's';
+        wrap.appendChild(el);
+      }
+    }
+    const center = document.createElement('div');
+    center.id = 'centerText';
+    center.textContent = 'I love you <3';
+    wrap.appendChild(center);
+  }
+
+  async function sequence(){
+    startScreen.classList.remove('active');
+    letterScreen.classList.add('active');
+    await sleep(650);
+
+    const cw = window.innerWidth, ch = window.innerHeight;
+    const word = 'ангелок';
+    for (const letter of word){
+      vibrate(500);
+      await showLetter(letter, cw, ch);
+    }
+
+    letterScreen.classList.remove('active');
+    buildHeart();
+    heartScreen.classList.add('active');
+  }
+
+  startBtn.addEventListener('click', function(){
+    vibrate(30);
+    sequence();
+  }, {passive:true});
+})();
+</script>
+</body>
+</html>
